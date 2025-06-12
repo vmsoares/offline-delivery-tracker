@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Offline Delivery Tracker</title>
+  <!-- Tailwind via CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+  <div id="root" class="p-4 flex-1"></div>
+  <footer class="text-center text-xs text-slate-400 py-2 border-t border-slate-800">
+    All processing is done locally in your browser. Use query parameters to fetch JSON (API mode).
+  </footer>
+
+  <script type="module">
+    import React, { useState, useMemo } from 'https://esm.sh/react@19';
+    import { createRoot } from 'https://esm.sh/react-dom@19/client';
+
+    function parseXML(text) {
+      const parser = new DOMParser();
+      const xml = parser.parseFromString(text, 'application/xml');
+      const encomendas = [];
+      const items = xml.getElementsByTagName('EncomendaRetorno');
+      for (const item of items) {
+        const g = tag => (item.getElementsByTagName(tag)[0]?.textContent || '').trim();
+        const statusNodes = item.getElementsByTagName('StatusTotal');
+        const statuses = Array.from(statusNodes).map(st => ({
+          codStatus: st.getElementsByTagName('CodStatus')[0]?.textContent || '',
+          descStatus: st.getElementsByTagName('DescStatus')[0]?.textContent || '',
+          dataStatus: st.getElementsByTagName('DataStatus')[0]?.textContent || ''
+        })).sort((a,b)=>b.dataStatus.localeCompare(a.dataStatus));
+        encomendas.push({
+          awb: g('Awb'),
+          pedido: g('Pedido'),
+          notaFiscal: g('NotaFiscal'),
+          serieNotaFiscal: g('SerieNotaFiscal'),
+          idCliente: g('IdCliente'),
+          codigoObjeto: g('CodigoObjeto'),
+          statuses
+        });
+      }
+      return encomendas;
+    }
+
+    function StatusPill({ text }) {
+      let color = 'bg-slate-600';
+      if (/entregue|delivered/i.test(text)) color = 'bg-green-600';
+      else if (/rota|transit/i.test(text)) color = 'bg-blue-600';
+      else if (/recebido|received|processada/i.test(text)) color = 'bg-amber-600';
+      else if (/problema|problem/i.test(text)) color = 'bg-red-600';
+      return <span className={`px-2 py-0.5 rounded text-xs ${color}`}>{text||'N/A'}</span>;
+    }
+
+    function App() {
+      const [records, setRecords] = useState([]);
+      const [query, setQuery] = useState('');
+
+      // Handle API mode via URL params
+      const params = new URLSearchParams(window.location.search);
+      const apiMode = params.toString().length > 0;
+
+      const handleFiles = async (ev) => {
+        const files = Array.from(ev.target.files);
+        let all = [];
+        for (const f of files) {
+          const text = await f.text();
+          all = all.concat(parseXML(text));
+        }
+        setRecords(all);
+      };
+
+      const filtered = useMemo(() => {
+        let data = records;
+        if (apiMode) {
+          for (const [key, val] of params.entries()) {
+            data = data.filter(r => {
+              if (key === 'awb') return r.awb.includes(val);
+              if (key === 'pedido') return r.pedido.includes(val);
+              if (key === 'notaFiscal') return r.notaFiscal.includes(val);
+              if (key === 'serieNotaFiscal') return r.serieNotaFiscal.includes(val);
+              if (key === 'codStatus') return r.statuses.some(s=>s.codStatus.includes(val));
+              if (key === 'descStatus') return r.statuses.some(s=>s.descStatus.toLowerCase().includes(val.toLowerCase()));
+              if (key === 'dataStatus') return r.statuses.some(s=>s.dataStatus.includes(val));
+              return true;
+            });
+          }
+          return data;
+        }
+        if (!query) return data;
+        const q = query.toLowerCase();
+        return data.filter(r =>
+          r.awb.toLowerCase().includes(q) ||
+          r.pedido.toLowerCase().includes(q) ||
+          r.notaFiscal.toLowerCase().includes(q) ||
+          r.statuses.some(s=>s.descStatus.toLowerCase().includes(q))
+        );
+      }, [records, query]);
+
+      if (apiMode) {
+        return (
+          <pre className="whitespace-pre-wrap text-xs bg-slate-800 p-4 rounded overflow-auto">
+            {JSON.stringify(filtered, null, 2) || '[]'}
+          </pre>
+        );
+      }
+
+      return (
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold">Offline Delivery Tracker</h1>
+          <input type="file" multiple accept=".xml,.txt" onChange={handleFiles}
+            className="block text-sm text-slate-200 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
+          <input type="text" placeholder="Search..." value={query} onChange={e=>setQuery(e.target.value)}
+            className="mt-2 p-2 bg-slate-800 rounded w-full" />
+          <p>{filtered.length} of {records.length} records</p>
+          <div className="overflow-auto rounded border border-slate-700">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-800">
+                <tr className="text-left">
+                  <th className="p-2">AWB</th>
+                  <th className="p-2">Pedido</th>
+                  <th className="p-2">Nota Fiscal</th>
+                  <th className="p-2">Série NF</th>
+                  <th className="p-2">Último Status</th>
+                  <th className="p-2">Data Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={i} className="border-t border-slate-800 odd:bg-slate-900 even:bg-slate-950">
+                    <td className="p-2">{r.awb || 'N/A'}</td>
+                    <td className="p-2">{r.pedido || 'N/A'}</td>
+                    <td className="p-2">{r.notaFiscal || 'N/A'}</td>
+                    <td className="p-2">{r.serieNotaFiscal || 'N/A'}</td>
+                    <td className="p-2"><StatusPill text={r.statuses[0]?.descStatus} /></td>
+                    <td className="p-2">{(r.statuses[0]?.dataStatus || '').replace('T',' ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
